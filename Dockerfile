@@ -1,4 +1,4 @@
-FROM golang:1.21
+FROM golang:1.21 AS builder
 
 WORKDIR /app
 
@@ -7,5 +7,9 @@ RUN go mod download
 
 COPY *.go ./
 
-RUN go build -o thanos-promql-connector
-ENTRYPOINT ["./thanos-promql-connector"]
+RUN CGO_ENABLED=0 go build -ldflags "-w -s" -o thanos-promql-connector
+
+FROM gcr.io/distroless/static-debian11:nonroot
+COPY --from=builder /app/thanos-promql-connector /thanos-promql-connector
+ENTRYPOINT ["/thanos-promql-connector"]
+CMD ["--help"]

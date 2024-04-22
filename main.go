@@ -35,10 +35,10 @@ import (
 
 var (
 	configFileAddress = flag.String("query.config-file", "", "Thanos-promql-connector configuration file path.")
-	connectorAddress  = flag.String("connector-address", ":8081",
-		"Address on which to expose the query grpc server.")
-	metricsAddress = flag.String("metrics-address", ":9090",
-		"Address on which to expose metrics")
+	connectorAddress  = flag.String("connector-address", ":8081", "Address on which to expose the query grpc server.")
+	metricsAddress    = flag.String("metrics-address", ":9090", "Address on which to expose metrics")
+	queryAddress      = flag.String("query-address", "", "Target address to query")
+	orgID             = flag.String("org-id", "", "Value for X-Scope-OrgID header")
 )
 
 type queryServer struct {
@@ -171,13 +171,24 @@ func (info *infoServer) Info(ctx context.Context, in *infopb.InfoRequest) (*info
 	}, nil
 }
 
+type CustomTransport struct {
+	orig http.RoundTripper
+}
+
+func (ct *CustomTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if *orgID != "" {
+		req.Header.Add("X-Scope-OrgID", *orgID)
+	}
+	return ct.orig.RoundTrip(req)
+}
+
 // createQueryBackendClient creates a connection with the backend that the queries will be forwarded to.
 func createQueryBackendClient(queryConfig queryBackendConfig) (v1.API, error) {
 	opts := []option.ClientOption{
 		option.WithScopes(queryConfig.Auth.Scopes...),
 		option.WithCredentialsFile(queryConfig.Auth.CredentialsFile),
 	}
-	transport, err := apihttp.NewTransport(context.Background(), http.DefaultTransport, opts...)
+	transport, err := apihttp.NewTransport(context.Background(), &CustomTransport{orig: http.DefaultTransport}, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating proxy HTTP transport: %s", err)
 	}
@@ -198,11 +209,14 @@ func main() {
 	logger = log.With(logger, "caller", log.DefaultCaller)
 
 	var err error
-	// Configuration Loading.
-	queryConfig, err := loadQueryConfig(*configFileAddress)
-	if err != nil {
-		level.Error(logger).Log("err", err)
-		os.Exit(1)
+	queryConfig := &queryBackendConfig{QueryTargetURL: *queryAddress}
+	if *queryAddress == "" {
+		// Configuration Loading.
+		queryConfig, err = loadQueryConfig(*configFileAddress)
+		if err != nil {
+			level.Error(logger).Log("err", err)
+			os.Exit(1)
+		}
 	}
 	// Query client setup.
 	queryBackendClient, err := createQueryBackendClient(*queryConfig)
