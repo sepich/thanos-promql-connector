@@ -31,6 +31,7 @@ import (
 	apihttp "google.golang.org/api/transport/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 )
 
 var (
@@ -39,6 +40,9 @@ var (
 	metricsAddress    = flag.String("metrics-address", ":9090", "Address on which to expose metrics")
 	queryAddress      = flag.String("query-address", "", "Target address to query")
 	orgID             = flag.String("org-id", "", "Value for X-Scope-OrgID header")
+	tlsCert           = flag.String("grpc-server-tls-cert", "", "TLS Certificate for gRPC server, leave blank to disable TLS")
+	tlsKey            = flag.String("grpc-server-tls-key", "", "TLS Key for the gRPC server, leave blank to disable TLS")
+	tlsCA             = flag.String("grpc-server-tls-client-ca", "", "TLS CA to verify clients against. If no client CA is specified, there is no client verification on server side. (tls.NoClientCert)")
 )
 
 type queryServer struct {
@@ -247,11 +251,16 @@ func main() {
 	}
 	{
 		//grpc server.
+		tlsConfig, err := getTLSConfig(*tlsCert, *tlsKey, *tlsCA, logger)
+		if err != nil {
+			level.Error(logger).Log("msg", "TLS configuration failed", "err", err)
+			os.Exit(1)
+		}
 		listener, err := net.Listen("tcp", *connectorAddress)
 		if err != nil {
 			panic(err)
 		}
-		server := grpc.NewServer()
+		server := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
 		querypb.RegisterQueryServer(server, &queryServer{queryBackendClient: queryBackendClient})
 		infopb.RegisterInfoServer(server, &infoServer{queryBackend: queryConfig.QueryTargetURL})
 		g.Add(func() error {
